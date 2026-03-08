@@ -1,0 +1,18 @@
+# AWS Credentials and sensitive files
+*.csv
+sijo-sa_*.csv
+
+# Virtual environment
+.venv/
+
+# Streamlit cache
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db

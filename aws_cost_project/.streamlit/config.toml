@@ -1,0 +1,12 @@
+[theme]
+# AWS Console dark theme colors:
+primaryColor = "#FF9900"        # AWS orange
+backgroundColor = "#131A22"     # dark navy
+secondaryBackgroundColor = "#232F3E"  # slightly lighter for card
+textColor = "#FFFFFF"
+font = "sans serif"  # matches AWS UI
+
+[server]
+headless = true
+enableCORS = false
+port = 8501
