@@ -24,11 +24,13 @@ def load_data_from_csv(path: str) -> pd.DataFrame:
     - usage_start (datetime)
     - unblended_cost (numeric)
     - resource_tags.businessunit (string)
+    - service (optional)
 
     You can adapt the field names to your export.
     """
     df = pd.read_csv(path, parse_dates=["usage_start"])
     df["BusinessUnit"] = df.get("resource_tags.businessunit", "").fillna("unknown")
+    df["Service"] = df.get("service", "Unknown")
     return df
 
 @st.cache_data(ttl=3600)
@@ -57,32 +59,40 @@ def fetch_cost_explorer(start: str, end: str, aws_access_key: str, aws_secret_ke
         TimePeriod={"Start": start, "End": end},
         Granularity="DAILY",
         Metrics=["UnblendedCost"],
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
     )
     # Process the initial response
     for g in response["ResultsByTime"]:
         date = g["TimePeriod"]["Start"]
-        amt = float(g["Total"]["UnblendedCost"]["Amount"])
-        rows.append({
-            "usage_start": pd.to_datetime(date),
-            "unblended_cost": amt,
-            "BusinessUnit": "Total Costs",
-        })
+        for group in g.get("Groups", []):
+            amt = float(group["Metrics"]["UnblendedCost"]["Amount"])
+            service = group["Keys"][0] if group["Keys"] else "Unknown"
+            rows.append({
+                "usage_start": pd.to_datetime(date),
+                "unblended_cost": amt,
+                "Service": service,
+                "BusinessUnit": "Total Costs",
+            })
     # Handle pagination using NextPageToken
     while "NextPageToken" in response:
         response = client.get_cost_and_usage(
             TimePeriod={"Start": start, "End": end},
             Granularity="DAILY",
             Metrics=["UnblendedCost"],
+            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
             NextPageToken=response["NextPageToken"],
         )
         for g in response["ResultsByTime"]:
             date = g["TimePeriod"]["Start"]
-            amt = float(g["Total"]["UnblendedCost"]["Amount"])
-            rows.append({
-                "usage_start": pd.to_datetime(date),
-                "unblended_cost": amt,
-                "BusinessUnit": "Total Costs",
-            })
+            for group in g.get("Groups", []):
+                amt = float(group["Metrics"]["UnblendedCost"]["Amount"])
+                service = group["Keys"][0] if group["Keys"] else "Unknown"
+                rows.append({
+                    "usage_start": pd.to_datetime(date),
+                    "unblended_cost": amt,
+                    "Service": service,
+                    "BusinessUnit": "Total Costs",
+                })
 
     return pd.DataFrame(rows)
 
@@ -128,3 +138,7 @@ if "df" in locals():
 
         agg = aggregate_monthly(filtered)
         st.line_chart(agg)
+
+        st.subheader("Top 10 Services by Cost")
+        service_costs = df.groupby("Service")["unblended_cost"].sum().sort_values(ascending=False).head(10)
+        st.bar_chart(service_costs)
