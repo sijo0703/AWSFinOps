@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import boto3
 from datetime import datetime, timedelta
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-import matplotlib.pyplot as plt
 
 # configure page metadata and layout early
 st.set_page_config(
@@ -34,15 +32,13 @@ def load_data_from_csv(path: str) -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=3600)
-def fetch_cost_explorer(start: str, end: str, tag_key: str, tag_value: str, aws_access_key: str, aws_secret_key: str, region: str, session_token: str = None) -> pd.DataFrame:
-    """Query AWS Cost Explorer for daily costs filtered by a tag.
+def fetch_cost_explorer(start: str, end: str, aws_access_key: str, aws_secret_key: str, region: str, session_token: str = None) -> pd.DataFrame:
+    """Query AWS Cost Explorer for daily costs (all data, no filters).
 
     Parameters
     ----------
     start : ISO date string (YYYY-MM-DD)
     end   : ISO date string (YYYY-MM-DD)
-    tag_key  : AWS tag key
-    tag_value: AWS tag value to match (EQUALS)
     aws_access_key: AWS access key ID
     aws_secret_key: AWS secret access key
     region: AWS region
@@ -61,13 +57,6 @@ def fetch_cost_explorer(start: str, end: str, tag_key: str, tag_value: str, aws_
         TimePeriod={"Start": start, "End": end},
         Granularity="DAILY",
         Metrics=["UnblendedCost"],
-        Filter={
-            "Tags": {
-                "Key": tag_key,
-                "Values": [tag_value],
-                "MatchOptions": ["EQUALS"],
-            }
-        },
     )
     # Process the initial response
     for g in response["ResultsByTime"]:
@@ -76,7 +65,7 @@ def fetch_cost_explorer(start: str, end: str, tag_key: str, tag_value: str, aws_
         rows.append({
             "usage_start": pd.to_datetime(date),
             "unblended_cost": amt,
-            "BusinessUnit": tag_value,
+            "BusinessUnit": "Total Costs",
         })
     # Handle pagination using NextPageToken
     while "NextPageToken" in response:
@@ -84,13 +73,6 @@ def fetch_cost_explorer(start: str, end: str, tag_key: str, tag_value: str, aws_
             TimePeriod={"Start": start, "End": end},
             Granularity="DAILY",
             Metrics=["UnblendedCost"],
-            Filter={
-                "Tags": {
-                    "Key": tag_key,
-                    "Values": [tag_value],
-                    "MatchOptions": ["EQUALS"],
-                }
-            },
             NextPageToken=response["NextPageToken"],
         )
         for g in response["ResultsByTime"]:
@@ -99,7 +81,7 @@ def fetch_cost_explorer(start: str, end: str, tag_key: str, tag_value: str, aws_
             rows.append({
                 "usage_start": pd.to_datetime(date),
                 "unblended_cost": amt,
-                "BusinessUnit": tag_value,
+                "BusinessUnit": "Total Costs",
             })
 
     return pd.DataFrame(rows)
@@ -128,8 +110,6 @@ else:
     aws_secret_key = st.text_input("AWS Secret Access Key", type="password")
     session_token = st.text_input("AWS Session Token (optional)", type="password")
     region = st.text_input("AWS Region", "us-east-1")
-    tag_key = st.text_input("Tag key", "BusinessUnit")
-    tag_val = st.text_input("Tag value", "LOB-A")
     days = st.slider("Days back", 1, 365, 90)
     if st.button("Load"):
         if not aws_access_key or not aws_secret_key:
@@ -137,39 +117,14 @@ else:
         else:
             end = datetime.utcnow().date().isoformat()
             start = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
-            df = fetch_cost_explorer(start, end, tag_key, tag_val, aws_access_key, aws_secret_key, region, session_token if session_token else None)
+            df = fetch_cost_explorer(start, end, aws_access_key, aws_secret_key, region, session_token if session_token else None)
 
 if "df" in locals():
     if df.empty:
         st.warning("No data returned.")
     else:
-        units = df["BusinessUnit"].unique().tolist()
-        choice = st.selectbox("Business unit / LOB", units)
-        filtered = df[df["BusinessUnit"] == choice]
-        st.write(f"Showing {len(filtered)} records for **{choice}**")
+        filtered = df
+        st.write(f"Showing {len(filtered)} records for **Total AWS Costs**")
 
         agg = aggregate_monthly(filtered)
         st.line_chart(agg)
-
-        if st.button("Forecast next 3 months"):
-            model = SARIMAX(agg, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
-            res = model.fit(disp=False)
-            pred = res.get_forecast(steps=3)
-            forecast = pred.predicted_mean
-            conf = pred.conf_int()
-            st.write("### Forecast")
-            fig, ax = plt.subplots()
-            agg.plot(ax=ax, label="historical")
-            forecast.plot(ax=ax, label="forecast")
-            ax.fill_between(
-                conf.index,
-                conf.iloc[:, 0],
-                conf.iloc[:, 1],
-                color="grey",
-                alpha=0.3,
-            )
-            ax.legend()
-            st.pyplot(fig)
-
-        if st.checkbox("Show raw data"):
-            st.dataframe(filtered)

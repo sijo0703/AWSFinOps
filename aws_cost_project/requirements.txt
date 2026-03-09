@@ -1,5 +1,3 @@
 streamlit
 pandas
 boto3
-statsmodels
-matplotlib
